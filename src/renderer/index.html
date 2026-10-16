@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:" />
+  <title>Ghost</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="panel">
+    <header class="bar">
+      <span class="dot busy" id="dot"></span>
+      <span class="status" id="status">Starting…</span>
+      <div class="actions">
+        <button id="btn-listen" class="toggle" title="Listen to audio (Ctrl+Shift+L)">Listen</button>
+        <button id="btn-screen" title="Ask about screen (Ctrl+Shift+Enter)">Screen</button>
+        <button id="btn-stealth" class="toggle" title="Hide overlay from screen share / screenshots">Stealth</button>
+        <button id="btn-clear" title="New session (Ctrl+Shift+R)">Clear</button>
+        <button id="btn-settings" title="Settings">⚙</button>
+        <button id="btn-hide" title="Hide (Ctrl+\)">✕</button>
+      </div>
+    </header>
+
+    <div class="live" id="live" hidden>
+      <div class="live-lines" id="live-lines"></div>
+      <button id="btn-suggest" title="What should I say? (Ctrl+Shift+Space)">What should I say?</button>
+    </div>
+
+    <main id="feed" class="feed">
+      <div class="empty" id="empty">
+        <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> ask about your screen</p>
+        <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> listen to the call (suggests replies)</p>
+        <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> what should I say?</p>
+        <p><kbd>Ctrl</kbd>+<kbd>\</kbd> show / hide</p>
+        <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←↑↓→</kbd> move</p>
+        <p><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd> click-through</p>
+        <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> new session</p>
+      </div>
+    </main>
+
+    <form class="settings" id="settings" hidden>
+      <h3>AI</h3>
+      <label>Service
+        <select name="provider">
+          <option value="claude-code">Claude subscription (Claude Code, no key)</option>
+          <option value="gemini">Google Gemini (free key)</option>
+          <option value="groq">Groq (free key)</option>
+          <option value="ollama">Ollama (free, runs on this PC)</option>
+          <option value="anthropic">Claude API (paid key)</option>
+        </select>
+      </label>
+      <label data-for="gemini">Gemini API key <input name="geminiKey" type="password" autocomplete="off" placeholder="from aistudio.google.com/apikey" /></label>
+      <label data-for="groq">Groq API key <input name="groqKey" type="password" autocomplete="off" placeholder="from console.groq.com/keys" /></label>
+      <label data-for="anthropic">Anthropic API key <input name="anthropicKey" type="password" autocomplete="off" placeholder="from console.anthropic.com" /></label>
+      <div class="grid" data-for="claude-code">
+        <label>Screen questions <select name="fastModel" data-models></select></label>
+        <label>Hard problems <select name="deepModel" data-models></select></label>
+        <label>Typed questions <select name="balancedModel" data-models></select></label>
+        <label>Live suggestions <select name="liveModel" data-models></select></label>
+      </div>
+
+      <h3>Audio</h3>
+      <label>Microphone <select name="mic"></select></label>
+      <div class="grid">
+        <label>Your voice (speech model) <select name="meSpeech" data-speech></select></label>
+        <label>Other person (speech model) <select name="themSpeech" data-speech></select></label>
+      </div>
+      <label>Hint words <input name="vocab" type="text" autocomplete="off" placeholder="e.g. display, overlay, Kubernetes" /></label>
+
+      <h3>Knowledge base</h3>
+      <p class="hint">Add your resume, notes or docs (PDF, TXT, PNG, JPG). Answers will use them, e.g. replying with your real experience. Click Add or drag files here. Changes apply right away.</p>
+      <ul class="kb-list" id="kb-list"></ul>
+      <div class="kb-actions">
+        <button type="button" id="kb-add">+ Add file</button>
+        <span class="settings-msg" id="kb-msg"></span>
+      </div>
+
+      <h3>General</h3>
+      <label class="chk"><input name="stealth" type="checkbox" /> Stealth: hide overlay from screenshots &amp; screen sharing</label>
+
+      <div class="settings-actions">
+        <span class="settings-msg" id="settings-msg"></span>
+        <button type="button" id="settings-cancel">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+
+    <form class="composer" id="composer">
+      <label class="chk"><input type="checkbox" id="with-screen" checked /> screen</label>
+      <input id="input" type="text" placeholder="Ask anything…  (Enter to send)" autocomplete="off" />
+    </form>
+  </div>
+  <script src="audio.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

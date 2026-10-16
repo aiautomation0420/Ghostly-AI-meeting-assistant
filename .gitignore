@@ -1,0 +1,17 @@
+node_modules/
+dist/
+
+# Secrets: API keys go in .env (only the example is shared)
+.env
+.env.*
+!.env.example
+
+# Downloaded speech models and binaries (npm run setup-whisper)
+whisper/
+
+# Built at runtime from native/loopback.cs
+native/*.exe
+native/*.exe.new
+
+# Logs (may contain timings and errors from your sessions)
+ghost*.log
