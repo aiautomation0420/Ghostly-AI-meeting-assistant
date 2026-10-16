@@ -13,17 +13,17 @@
       <span class="status" id="status">Starting…</span>
       <div class="actions">
         <button id="btn-listen" class="toggle" title="Listen to audio (Ctrl+Shift+L)">Listen</button>
+        <button id="btn-learn" class="toggle" title="Save interviews to the AI's knowledge when you stop listening">Learn</button>
         <button id="btn-screen" title="Ask about screen (Ctrl+Shift+Enter)">Screen</button>
         <button id="btn-stealth" class="toggle" title="Hide overlay from screen share / screenshots">Stealth</button>
         <button id="btn-clear" title="New session (Ctrl+Shift+R)">Clear</button>
-        <button id="btn-settings" title="Settings">⚙</button>
-        <button id="btn-hide" title="Hide (Ctrl+\)">✕</button>
+        <button id="btn-settings" title="Settings">Settings</button>
+        <button id="btn-hide" title="Hide (Ctrl+\)">Hide</button>
       </div>
     </header>
 
     <div class="live" id="live" hidden>
       <div class="live-lines" id="live-lines"></div>
-      <button id="btn-suggest" title="What should I say? (Ctrl+Shift+Space)">What should I say?</button>
     </div>
 
     <main id="feed" class="feed">
@@ -86,7 +86,7 @@
     </form>
 
     <form class="composer" id="composer">
-      <label class="chk"><input type="checkbox" id="with-screen" checked /> screen</label>
+      <button type="button" id="with-screen" class="toggle on" title="Include a screenshot with typed questions">screen</button>
       <input id="input" type="text" placeholder="Ask anything…  (Enter to send)" autocomplete="off" />
     </form>
   </div>

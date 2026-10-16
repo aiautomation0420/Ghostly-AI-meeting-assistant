@@ -50,10 +50,13 @@ function scrollToBottom() {
 
 function send() {
   const text = input.value;
-  if (!text.trim() && !withScreen.checked) return;
+  if (!text.trim() && !withScreen.classList.contains('on')) return;
   input.value = '';
-  window.ghost.ask({ text, withScreen: withScreen.checked });
+  window.ghost.ask({ text, withScreen: withScreen.classList.contains('on') });
 }
+
+withScreen.addEventListener('click', () => withScreen.classList.toggle('on'));
+$('btn-learn').addEventListener('click', () => window.ghost.setLearn(!state.learn));
 
 $('composer').addEventListener('submit', (e) => { e.preventDefault(); send(); });
 $('btn-screen').addEventListener('click', () => window.ghost.ask({ text: input.value, withScreen: true }).then(() => {}));
@@ -73,6 +76,7 @@ function showIdle(prefix = 'Ready') {
 window.ghost.onState((s) => {
   state = s;
   stealthBtn.classList.toggle('on', s.stealth);
+  $('btn-learn').classList.toggle('on', s.learn);
   showIdle();
 });
 
@@ -173,7 +177,6 @@ const liveBar = $('live');
 const liveLines = $('live-lines');
 
 listenBtn.addEventListener('click', () => window.ghost.toggleListen());
-$('btn-suggest').addEventListener('click', () => window.ghost.suggest());
 
 function showLiveHint(text) {
   liveLines.innerHTML = '';
@@ -400,7 +403,7 @@ settingsForm.addEventListener('submit', async (e) => {
 const kbList = $('kb-list');
 const kbMsg = $('kb-msg');
 const kbAdd = $('kb-add');
-const KIND_ICON = { pdf: '📄', text: '📝', image: '🖼️' };
+const KIND_ICON = { pdf: '📄', text: '📝', image: '🖼️', interview: '🎙️' };
 
 function renderKnowledge(items) {
   kbList.innerHTML = '';
