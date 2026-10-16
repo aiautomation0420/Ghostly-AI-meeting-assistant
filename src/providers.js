@@ -133,6 +133,10 @@ function createOpenAICompatible(name, preset) {
       return this.stream({ system, history: [{ role: 'user', text }], onText, signal });
     },
 
+    async complete({ system, text }) {
+      return (await this.oneShot({ system, text, onText() {}, signal: new AbortController().signal })).text;
+    },
+
     describeError(err) {
       if (err instanceof OpenAI.AuthenticationError || err?.status === 400 && /api key/i.test(err.message)) {
         return `Invalid ${preset.keyVar}. ${preset.keyHelp}`;
@@ -202,6 +206,10 @@ function createAnthropic() {
 
     oneShot({ system, text, onText, signal }) {
       return this.stream({ system, history: [{ role: 'user', text }], onText, signal });
+    },
+
+    async complete({ system, text }) {
+      return (await this.oneShot({ system, text, onText() {}, signal: new AbortController().signal })).text;
     },
 
     describeError(err) {
@@ -456,6 +464,18 @@ function createClaudeCode() {
           { type: 'text', text },
         ], () => {});
         return r.text;
+      } finally {
+        clearTimeout(timeout);
+        worker.stop();
+      }
+    },
+
+    // One-off text job on a temporary worker, so the warm ones aren't disturbed.
+    async complete({ system, text }) {
+      const worker = new Worker('util', system);
+      const timeout = setTimeout(() => worker.fail(new ProviderError('The AI took too long.')), 300000);
+      try {
+        return (await worker.send([{ type: 'text', text }], () => {})).text;
       } finally {
         clearTimeout(timeout);
         worker.stop();

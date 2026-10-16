@@ -30,7 +30,7 @@ Click **⚙** on the overlay to choose the AI service (and its key), which Claud
 | `Ctrl+Alt+X` | Toggle click-through (mouse passes through) |
 | `Ctrl+Shift+R` | New session (clear history and transcript) |
 
-Type in the box at the bottom for follow-ups; untick **screen** to ask without a screenshot.
+Type in the box at the bottom for follow-ups; switch off the **screen** toggle to ask without a screenshot.
 
 The overlay has no taskbar button. Use the **tray icon** (indigo dot, bottom-right; may be under the `^` arrow) to show it, reset its position, toggle modes, or quit.
 
@@ -45,6 +45,10 @@ On Windows, computer audio is captured by a small native helper (`native/loopbac
 Use headphones if you can: with speakers the mic also hears the other person. Echoed lines are filtered out, but headphones give cleaner captions.
 
 Speech-to-text uses two models: the fast `base.en` for the other person (keeps suggestions quick) and the more accurate `small.en` for your own mic, if installed (`WHISPER_MODEL=small.en npm run setup-whisper`). Override with `WHISPER_MODEL_THEM` / `WHISPER_MODEL_ME`. The mic defaults to your headset's mic (matched by name to the default output device), else the Windows default; set `GHOST_MIC` to pick one by name. `GHOST_VOCAB` lists words speech-to-text should expect (names, jargon).
+
+## Learning from interviews
+
+With **Learn** on (the default), stopping Listen or pressing Clear turns the conversation into notes: for each question asked, the question, its topics, a summary of what you said, and a better answer built from your answer and your knowledge-base files. They're saved as 🎙️ entries in the knowledge base (delete any in Settings). When a similar question comes up later, the closest notes are added to the request, so suggestions reuse the better answers. Matching is by shared keywords, so a question worded very differently may not find its notes. Quitting mid-interview saves the transcript and learns it on the next start. Turn **Learn** off to keep an interview out of the knowledge base. `node scripts/test-recall.js` checks the lookup.
 
 ## Models (claude-code provider)
 

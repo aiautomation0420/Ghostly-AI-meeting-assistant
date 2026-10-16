@@ -64,7 +64,6 @@ button.toggle.on { background: rgba(99, 102, 241, 0.55); border-color: rgba(129,
 .live-lines .them b { color: #fbbf24; font-weight: 600; }
 .live-lines .me b { color: #67e8f9; font-weight: 600; }
 .live-lines .hint { font-style: italic; }
-.live button { flex: none; }
 
 .block.suggest { border-left: 2px solid rgba(251, 191, 36, 0.8); padding-left: 8px; }
 .block.suggest .tag { color: #fbbf24; }

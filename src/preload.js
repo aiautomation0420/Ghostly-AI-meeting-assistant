@@ -5,6 +5,7 @@ const on = (channel) => (cb) => ipcRenderer.on(channel, (_e, data) => cb(data));
 contextBridge.exposeInMainWorld('ghost', {
   ask: (payload) => ipcRenderer.invoke('ask', payload),
   setStealth: (on) => ipcRenderer.send('set-stealth', on),
+  setLearn: (on) => ipcRenderer.send('set-learn', on),
   setClickThrough: (on) => ipcRenderer.send('set-click-through', on),
   reset: () => ipcRenderer.send('reset'),
   hide: () => ipcRenderer.send('hide'),

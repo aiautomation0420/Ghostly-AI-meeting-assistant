@@ -62,6 +62,26 @@ const withKnowledge = (prompt) => prompt + knowledge.promptBlock();
 const tierPrompts = () => Object.fromEntries(Object.entries(TIER_PROMPTS).map(([k, v]) => [k, withKnowledge(v)]));
 const livePrompt = () => withKnowledge(LIVE_PROMPT);
 
+// After each interview, the transcript is turned into notes (one block per
+// question) that are recalled when a similar question comes up later.
+const LEARN_PROMPT = `You review interview transcripts so the user answers better next time. The transcript comes from speech recognition, so expect small errors: "Them" is the interviewer, "Me" is the user.
+
+Start with one line: "Interview: <company, role and interviewer if mentioned, else unknown>".
+Then, for every question the interviewer asked, one block, blocks separated by a blank line:
+Q: <the question, cleaned up, on one line>
+Topics: <comma-separated keywords: subject, skills, technologies>
+I said: <one-line summary of the user's actual answer, or "(no answer)">
+Better answer: <a strong first-person answer, 2-5 sentences, built on what the user said and the facts in their files; never invent experience>
+
+If the transcript contains no interview questions, reply with exactly NONE.`;
+
+const pastInterviews = (query) => {
+  const notes = knowledge.recall(query);
+  return notes.length
+    ? `From the user's past interviews (similar questions, with better answers worked out afterwards; reuse them when they fit):\n${notes.join('\n\n')}`
+    : '';
+};
+
 let provider = null;
 let providerError = null; // setup problem shown in the overlay (missing key etc.)
 
@@ -144,6 +164,7 @@ function pushState() {
   win?.webContents.send('state', {
     stealth,
     clickThrough,
+    learn: learnOn(),
     model: provider?.model ? `${provider.label} · ${provider.model}` : '',
     error: providerError,
   });
@@ -298,6 +319,8 @@ async function ask({ text, withScreen }) {
   if (listening && transcript.length) {
     turn.text += `\n\nLive conversation transcript (most recent last):\n${formatTranscript(20)}`;
   }
+  const past = pastInterviews(`${text || ''}\n${listening ? formatTranscript(4) : ''}`);
+  if (past) turn.text += `\n\n${past}`;
   history.push(turn);
 
   // Routing (multi-model providers only): screenshots go to the fast model,
@@ -388,9 +411,56 @@ async function ask({ text, withScreen }) {
 
 // ---------- Live audio ----------
 
+const fmtLine = (l) => `${l.who === 'them' ? 'Them' : 'Me'}: ${l.text}`;
+
 function formatTranscript(lines) {
-  return transcript.slice(-lines)
-    .map((l) => `${l.who === 'them' ? 'Them' : 'Me'}: ${l.text}`).join('\n');
+  return transcript.slice(-lines).map(fmtLine).join('\n');
+}
+
+// ---------- Learning from interviews ----------
+
+const PENDING = path.join(knowledge.DIR, 'pending-transcript.json'); // saved at quit, learned next start
+let learnedUpTo = 0; // transcript lines up to this time are already learned
+const learning = new Set(); // line arrays being summarized; saved as pending if the app quits first
+
+const unlearned = () => transcript.filter((l) => l.at > learnedUpTo);
+const learnOn = () => process.env.GHOST_LEARN !== '0'; // the Learn button
+
+async function learn(lines) {
+  if (lines.filter((l) => l.who === 'them').length < 3) return; // not a real conversation
+  learnedUpTo = Math.max(learnedUpTo, lines[lines.length - 1].at);
+  if (!learnOn()) return log('learn off: interview not saved');
+  learning.add(lines);
+  try {
+    if (!(await providerReady(15000)) || providerError) throw new Error(providerError || 'AI not ready');
+    const notes = (await provider.complete({ system: withKnowledge(LEARN_PROMPT), text: lines.map(fmtLine).join('\n') })).trim();
+    const count = (notes.match(/^Q:/gm) || []).length;
+    if (!count) return log('learn: no interview questions found');
+    const when = new Date(lines[0].at);
+    knowledge.addText(`Interview ${when.toISOString().slice(0, 16).replace('T', ' ')}`, 'interview', notes);
+    log('learned', count, 'questions from interview');
+    win?.webContents.send('status', `Learned ${count} questions from this interview`);
+  } catch (err) {
+    log('learn failed, will retry next start:', err.message);
+    savePending(lines);
+  } finally {
+    learning.delete(lines);
+  }
+}
+
+function savePending(lines) {
+  if (!lines.length) return;
+  let saved = [];
+  try { saved = JSON.parse(fs.readFileSync(PENDING, 'utf8')); } catch {}
+  fs.mkdirSync(knowledge.DIR, { recursive: true });
+  fs.writeFileSync(PENDING, JSON.stringify([...saved, ...lines]));
+}
+
+function learnPending() {
+  let lines;
+  try { lines = JSON.parse(fs.readFileSync(PENDING, 'utf8')); } catch { return; }
+  fs.unlinkSync(PENDING);
+  learn(lines);
 }
 
 function words(text) {
@@ -435,6 +505,7 @@ async function setListening(on) {
     win.webContents.send('listen:stop');
     win.webContents.send('listen:state', { on: false });
     log('listening off');
+    learn(unlearned());
     return;
   }
   win.webContents.send('listen:state', { on: true, status: 'Starting speech-to-text…' });
@@ -477,7 +548,7 @@ function commitLine(line) {
     return false;
   }
   transcript.push(line);
-  if (transcript.length > 300) transcript.shift();
+  if (transcript.length > 3000) transcript.shift(); // whole interview is kept for learning
   if (line.who === 'them') {
     // Remove mic lines that turned out to be echoes of this.
     const before = transcript.length;
@@ -629,14 +700,14 @@ async function suggest({ force = false, since = Date.now(), extraLine = null, ga
   // Split the window into context and the lines that arrived since the last
   // check, so a follow-up question isn't mistaken for one already handled.
   const recent = lines.slice(-25);
-  const fmt = (l) => `${l.who === 'them' ? 'Them' : 'Me'}: ${l.text}`;
-  const older = recent.filter((l) => l.at <= live.checkedUpTo).map(fmt).join('\n');
-  const fresh = recent.filter((l) => l.at > live.checkedUpTo).map(fmt).join('\n');
+  const older = recent.filter((l) => l.at <= live.checkedUpTo).map(fmtLine).join('\n');
+  const fresh = recent.filter((l) => l.at > live.checkedUpTo).map(fmtLine).join('\n');
   const newest = recent.length ? recent[recent.length - 1].at : live.checkedUpTo;
   if (gate) gate.checkedUpTo = newest; // applied only if the guess is confirmed
   else live.checkedUpTo = newest;
   const text = [
     older && `Earlier (context only, already handled):\n${older}`,
+    fresh && pastInterviews(fresh),
     `NEW since your last check (decide based on these):\n${fresh || '(nothing new)'}`,
     force && 'The user pressed "What should I say?". Do not reply SKIP: suggest the best thing to say or ask next.',
   ].filter(Boolean).join('\n\n');
@@ -684,6 +755,7 @@ function setStealth(on) {
 function resetSession() {
   currentAbort?.abort();
   provider?.reset?.();
+  learn(unlearned());
   history = [];
   transcript = [];
   win.webContents.send('reset');
@@ -715,6 +787,7 @@ function registerShortcuts() {
 
 ipcMain.handle('ask', (_e, payload) => ask(payload));
 ipcMain.on('set-stealth', (_e, on) => setStealth(on));
+ipcMain.on('set-learn', (_e, on) => { settings.save({ learn: on ? '' : '0' }); pushState(); });
 ipcMain.on('set-click-through', (_e, on) => setClickThrough(on));
 ipcMain.on('reset', resetSession);
 ipcMain.on('hide', () => win.hide());
@@ -844,7 +917,7 @@ function cleanupOrphans() {
     $n = 0
     Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -ne $me } | Where-Object {
       ($_.Name -in @('whisper-server.exe', 'loopback.exe') -and $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, 'OrdinalIgnoreCase')) -or
-      ($_.Name -eq 'claude.exe' -and $_.CommandLine -match 'small overlay on the user|live conversation \\(a call|You transcribe documents accurately')
+      ($_.Name -eq 'claude.exe' -and $_.CommandLine -match 'small overlay on the user|live conversation \\(a call|You transcribe documents accurately|You review interview transcripts')
     } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $n++ }
     $n`;
   const { execFile } = require('child_process');
@@ -874,10 +947,13 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   registerShortcuts();
-  initProvider();
+  initProvider().then(learnPending);
 });
 
 app.on('will-quit', () => {
+  // Learned on next start (too slow to do while quitting).
+  for (const lines of learning) savePending(lines);
+  if (learnOn()) savePending(unlearned());
   globalShortcut.unregisterAll();
   provider?.shutdown?.(); // stop claude-code child processes
   stopTranscribers();

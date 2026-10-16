@@ -21,6 +21,7 @@ const ENV = {
   meSpeech: 'WHISPER_MODEL_ME',
   themSpeech: 'WHISPER_MODEL_THEM',
   stealth: 'GHOST_STEALTH',
+  learn: 'GHOST_LEARN', // '0' = don't save interviews to the knowledge base
 };
 
 const FILE = path.join(app.getPath('userData'), 'settings.json');

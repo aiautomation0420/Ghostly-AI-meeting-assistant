@@ -10,6 +10,7 @@ const DIR = path.join(app.getPath('userData'), 'knowledge');
 const INDEX = path.join(DIR, 'index.json');
 const MAX_CHARS = 60000; // total across files, so prompts stay fast
 let cachedBlock = null;   // promptBlock() result, reset when files change
+let cachedChunks = null;  // interviewChunks() result, reset when files change
 
 const KINDS = {
   '.txt': 'text', '.md': 'text',
@@ -78,26 +79,29 @@ async function add(file, { readImage }) {
   }
   text = text.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   if (!text) throw new Error(`${name}: no text found.`);
+  return addText(name, kind, text);
+}
 
+function addText(name, kind, text) {
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const entry = { id, name, kind, chars: text.length, addedAt: new Date().toISOString() };
   fs.mkdirSync(DIR, { recursive: true });
   fs.writeFileSync(path.join(DIR, `${entry.id}.txt`), text);
   saveIndex([...list(), entry]);
-  cachedBlock = null;
+  cachedBlock = cachedChunks = null;
   return entry;
 }
 
 function remove(id) {
   saveIndex(list().filter((e) => e.id !== id));
-  cachedBlock = null;
+  cachedBlock = cachedChunks = null;
   try { fs.unlinkSync(path.join(DIR, `${id}.txt`)); } catch {}
 }
 
 // Text for the AI's instructions ('' when the knowledge base is empty).
 function promptBlock() {
   if (cachedBlock !== null) return cachedBlock;
-  const items = list();
+  const items = list().filter((i) => i.kind !== 'interview'); // those are recalled per question
   if (!items.length) return (cachedBlock = '');
   let budget = MAX_CHARS;
   const files = [];
@@ -117,4 +121,48 @@ The user added these files so your answers fit them. When a question is about th
 ${files.join('\n\n')}`);
 }
 
-module.exports = { list, add, remove, promptBlock, EXTENSIONS, DIR };
+// ---------- Past interviews ----------
+// Notes learned from each interview: one block per question asked ("Q: …").
+// recall() returns the blocks that share the most words with the current
+// question, rarer words counting more.
+// ponytail: keyword overlap, not embeddings; add an embedding index if
+// paraphrased questions get missed.
+const STOP = new Set(('the and or to of in on for with is are was were be been you your yours me my mine it its '
+  + 'this that these those what how why when where who which do does did can could would should will tell about '
+  + 'so like just yeah okay ok um uh have has had at as by from an we our they them their there here')
+  .split(' '));
+const terms = (s) => (s.toLowerCase().match(/[a-z0-9+#]+/g) || []).filter((w) => w.length > 1 && !STOP.has(w));
+
+function interviewChunks() {
+  if (cachedChunks) return cachedChunks;
+  cachedChunks = [];
+  for (const item of list().filter((i) => i.kind === 'interview')) {
+    let text;
+    try { text = fs.readFileSync(path.join(DIR, `${item.id}.txt`), 'utf8'); } catch { continue; }
+    for (const block of text.split(/\n\s*\n/)) {
+      if (block.trim().startsWith('Q:')) cachedChunks.push({ text: block.trim(), terms: new Set(terms(block)) });
+    }
+  }
+  return cachedChunks;
+}
+
+function recall(query, k = 4) {
+  const chunks = interviewChunks();
+  const words = [...new Set(terms(query))];
+  if (!chunks.length || !words.length) return [];
+  const weight = Object.fromEntries(words.map((w) => {
+    const df = chunks.filter((c) => c.terms.has(w)).length;
+    return [w, df ? Math.log(1 + chunks.length / df) : 0];
+  }));
+  return chunks
+    .map((c) => {
+      const shared = words.filter((w) => c.terms.has(w));
+      return { text: c.text, shared: shared.length, score: shared.reduce((s, w) => s + weight[w], 0) };
+    })
+    .filter((r) => r.shared >= 2)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, k)
+    .map((r) => r.text);
+}
+
+module.exports = { list, add, addText, remove, promptBlock, recall, EXTENSIONS, DIR };
