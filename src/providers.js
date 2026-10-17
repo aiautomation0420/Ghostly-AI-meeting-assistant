@@ -96,8 +96,8 @@ function createOpenAICompatible(name, preset) {
           continue;
         }
         const content = [];
-        if (turn.image) {
-          content.push({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${turn.image}` } });
+        for (const image of [].concat(turn.image || [])) {
+          content.push({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image}` } });
         }
         content.push({ type: 'text', text: turn.text });
         messages.push({ role: 'user', content });
@@ -167,8 +167,8 @@ function createAnthropic() {
       const messages = recentTurns(history).map((turn) => {
         if (turn.role === 'assistant') return { role: 'assistant', content: turn.raw ?? turn.text };
         const content = [];
-        if (turn.image) {
-          content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: turn.image } });
+        for (const image of [].concat(turn.image || [])) {
+          content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } });
         }
         content.push({ type: 'text', text: turn.text });
         return { role: 'user', content };
@@ -424,8 +424,8 @@ function createClaudeCode() {
         .join('\n\n');
       if (missed) content.push({ type: 'text', text: `Earlier in this conversation:\n\n${missed}` });
       const last = history[history.length - 1];
-      if (last.image) {
-        content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: last.image } });
+      for (const image of [].concat(last.image || [])) {
+        content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } });
       }
       content.push({ type: 'text', text: last.text });
 

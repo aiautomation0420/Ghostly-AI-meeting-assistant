@@ -34,7 +34,11 @@ Type in the box at the bottom for follow-ups; switch off the **screen** toggle t
 
 The overlay has no taskbar button. Use the **tray icon** (indigo dot, bottom-right; may be under the `^` arrow) to show it, reset its position, toggle modes, or quit.
 
-**Stealth** (on by default) hides the overlay from screenshots and screen sharing via Electron's `setContentProtection` (Windows 10 2004+ / macOS).
+With several monitors, **Screen** sends one screenshot per monitor (the one under the mouse first), so a question on any screen is found.
+
+**Stealth** (on by default) hides the overlay from screenshots and screen sharing via Electron's `setContentProtection` (Windows 10 2004+ / macOS). While it's on, the overlay can't be resized and the cursor stays an arrow over it, so a recording shows no resize or text cursors over "nothing".
+
+**Brief** tells the AI what you're doing right now: the company and role, the job description, the topic of the call, what to focus on or avoid. Every answer sticks to it, and it overrides the knowledge-base files when they conflict. It's saved until you change it. You can also type `brief: …` in the chat box (`brief:` alone clears it).
 
 ## Live audio
 

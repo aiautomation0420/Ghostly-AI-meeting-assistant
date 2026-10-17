@@ -17,6 +17,7 @@
         <button id="btn-screen" title="Ask about screen (Ctrl+Shift+Enter)">Screen</button>
         <button id="btn-stealth" class="toggle" title="Hide overlay from screen share / screenshots">Stealth</button>
         <button id="btn-clear" title="New session (Ctrl+Shift+R)">Clear</button>
+        <button id="btn-brief" class="toggle" title="Tell the AI what you're doing right now (or type brief: … in the chat box)">Brief</button>
         <button id="btn-settings" title="Settings">Settings</button>
         <button id="btn-hide" title="Hide (Ctrl+\)">Hide</button>
       </div>
@@ -37,6 +38,18 @@
         <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> new session</p>
       </div>
     </main>
+
+    <form class="settings brief" id="brief" hidden>
+      <h3>Brief</h3>
+      <p class="hint">What are you doing right now? Answers will stick to this. E.g. the company and role, the job description, the topic of the call, what to focus on or avoid. Saved until you change it; applies right away.</p>
+      <textarea name="text" spellcheck="false" placeholder="Interview at Acme Corp for Junior Bookkeeper. They use QuickBooks and Excel. Focus on my AP/AR experience; keep answers short and confident.&#10;&#10;Job description: …"></textarea>
+      <div class="settings-actions">
+        <span class="settings-msg" id="brief-msg"></span>
+        <button type="button" id="brief-clear">Clear brief</button>
+        <button type="button" id="brief-cancel">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
 
     <form class="settings" id="settings" hidden>
       <h3>AI</h3>

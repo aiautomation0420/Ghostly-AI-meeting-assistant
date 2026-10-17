@@ -8,6 +8,8 @@ const { app, nativeImage } = require('electron');
 
 const DIR = path.join(app.getPath('userData'), 'knowledge');
 const INDEX = path.join(DIR, 'index.json');
+const BRIEF = path.join(DIR, 'brief.txt'); // what the user is doing right now (typed in the Brief panel)
+const MAX_BRIEF = 8000;
 const MAX_CHARS = 60000; // total across files, so prompts stay fast
 let cachedBlock = null;   // promptBlock() result, reset when files change
 let cachedChunks = null;  // interviewChunks() result, reset when files change
@@ -98,11 +100,37 @@ function remove(id) {
   try { fs.unlinkSync(path.join(DIR, `${id}.txt`)); } catch {}
 }
 
-// Text for the AI's instructions ('' when the knowledge base is empty).
+function getBrief() {
+  try { return fs.readFileSync(BRIEF, 'utf8'); } catch { return ''; }
+}
+
+function setBrief(text) {
+  text = String(text || '').trim().slice(0, MAX_BRIEF);
+  fs.mkdirSync(DIR, { recursive: true });
+  if (text) fs.writeFileSync(BRIEF, text);
+  else try { fs.unlinkSync(BRIEF); } catch {}
+  cachedBlock = null;
+  return text;
+}
+
+function briefBlock() {
+  const brief = getBrief().trim();
+  return brief ? `
+
+## Right now (the user's brief)
+The user wrote this about what they are doing right now. It is the most important context: keep every answer on this topic and tailor it to this situation (company, role, subject, level, what to focus on or avoid). If it conflicts with the files below, follow the brief.
+
+<brief>
+${brief}
+</brief>` : '';
+}
+
+// Text for the AI's instructions ('' when the brief and knowledge base are empty).
 function promptBlock() {
   if (cachedBlock !== null) return cachedBlock;
+  const brief = briefBlock();
   const items = list().filter((i) => i.kind !== 'interview'); // those are recalled per question
-  if (!items.length) return (cachedBlock = '');
+  if (!items.length) return (cachedBlock = brief);
   let budget = MAX_CHARS;
   const files = [];
   for (const item of items) {
@@ -113,7 +141,7 @@ function promptBlock() {
     budget -= text.length;
     files.push(`<file name="${item.name}">\n${text}\n</file>`);
   }
-  return (cachedBlock = `
+  return (cachedBlock = `${brief}
 
 ## About the user (from files they added)
 The user added these files so your answers fit them. When a question is about the user (their experience, skills, background, projects, education), answer as the user, in first person, using these facts. Don't invent experience the files don't support; if they don't cover it, answer generally.
@@ -165,4 +193,4 @@ function recall(query, k = 4) {
     .map((r) => r.text);
 }
 
-module.exports = { list, add, addText, remove, promptBlock, recall, EXTENSIONS, DIR };
+module.exports = { list, add, addText, remove, getBrief, setBrief, promptBlock, recall, EXTENSIONS, DIR, MAX_BRIEF };

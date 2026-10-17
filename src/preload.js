@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('ghost', {
   addKnowledge: (paths) => ipcRenderer.invoke('knowledge:add', paths),
   pathForFile: (file) => webUtils.getPathForFile(file), // dropped File → its path on disk
   removeKnowledge: (id) => ipcRenderer.invoke('knowledge:remove', id),
+  getBrief: () => ipcRenderer.invoke('brief:get'),
+  setBrief: (text) => ipcRenderer.invoke('brief:set', text),
 
   // Live audio
   toggleListen: () => ipcRenderer.send('listen:toggle'),

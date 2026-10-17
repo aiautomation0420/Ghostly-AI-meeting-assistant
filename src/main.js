@@ -33,6 +33,8 @@ const SYSTEM_PROMPT = `You are a real-time assistant shown in a small overlay on
 - Be concise and scannable: lead with the direct answer, then at most a few short bullets.
 - When given a screenshot, figure out what the user most likely needs help with right now (a question on screen, an error, a problem to solve, what to say next) and address that.
 - For code, give the working solution first, then a one-line explanation.
+- When it's a question the user has to answer (interview, test, application or screening question), write the answer itself, ready for the user to say or type: first person, as the user, the best answer their real experience supports. Never coach or describe the answer ("you could mention…", "use STAR", "talk about a time…"), and don't restate the question.
+- For behavioural questions ("tell me about a time…", "describe a situation…", "give an example…"), use STAR with bold labels, one paragraph each, 1-3 natural spoken sentences: **Situation:** **Task:** **Action:** (the longest, with what I did and how) **Result:** (measurable if possible, plus what I learned). Use real facts from the user's files; where a detail like a number isn't known, put a short placeholder such as [X hours] instead of inventing it.
 - Never pad with preamble like "Sure!" or "Great question".`;
 
 // Per-tier prompts for providers that run several models (claude-code).
@@ -140,7 +142,7 @@ function createWindow() {
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow: false,
-    resizable: true,
+    resizable: !stealth, // resize edges show ↔ cursors, which recordings capture
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -165,6 +167,7 @@ function pushState() {
     stealth,
     clickThrough,
     learn: learnOn(),
+    brief: Boolean(knowledge.getBrief()),
     model: provider?.model ? `${provider.label} · ${provider.model}` : '',
     error: providerError,
   });
@@ -228,23 +231,29 @@ async function captureScreen() {
     await new Promise((r) => setTimeout(r, 150));
   }
   try {
-    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    // Every monitor: the question may be on a different screen than the
+    // overlay (and the cursor, when the Screen button is clicked).
+    // Cursor's display first, so a single-screen answer favours it.
+    const displays = screen.getAllDisplays();
+    const cursorId = String(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id);
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
       thumbnailSize: {
-        width: Math.round(display.size.width * display.scaleFactor),
-        height: Math.round(display.size.height * display.scaleFactor),
+        width: Math.max(...displays.map((d) => Math.round(d.size.width * d.scaleFactor))),
+        height: Math.max(...displays.map((d) => Math.round(d.size.height * d.scaleFactor))),
       },
     });
-    const source = sources.find((s) => s.display_id === String(display.id)) || sources[0];
-    let img = source.thumbnail;
-    // Downscale: larger images cost more tokens without helping the model.
-    const { width, height } = img.getSize();
-    const maxEdge = 1568;
-    if (Math.max(width, height) > maxEdge) {
-      img = img.resize(width >= height ? { width: maxEdge } : { height: maxEdge });
-    }
-    return img.toJPEG(85).toString('base64');
+    sources.sort((a, b) => (b.display_id === cursorId) - (a.display_id === cursorId));
+    return sources.filter((s) => !s.thumbnail.isEmpty()).map((s) => {
+      let img = s.thumbnail;
+      // Downscale: larger images cost more tokens without helping the model.
+      const { width, height } = img.getSize();
+      const maxEdge = 1568;
+      if (Math.max(width, height) > maxEdge) {
+        img = img.resize(width >= height ? { width: maxEdge } : { height: maxEdge });
+      }
+      return img.toJPEG(85).toString('base64');
+    });
   } finally {
     if (!stealth && wasVisible) win.showInactive();
   }
@@ -307,7 +316,11 @@ async function ask({ text, withScreen }) {
   if (withScreen) {
     win.webContents.send('status', 'Capturing screen…');
     try {
-      turn.image = await captureScreen();
+      turn.image = await captureScreen(); // one JPEG per monitor
+      if (!turn.image.length) throw new Error('no screen image');
+      if (turn.image.length > 1) {
+        turn.text += `\n\n(${turn.image.length} screenshots, one per monitor, the one under the mouse first. The question may be on any of them; ignore the others.)`;
+      }
     } catch (err) {
       log('screen capture failed:', err.message);
       win.webContents.send('answer:start', { question: text?.trim() || '(screen)', withScreen });
@@ -322,6 +335,7 @@ async function ask({ text, withScreen }) {
   const past = pastInterviews(`${text || ''}\n${listening ? formatTranscript(4) : ''}`);
   if (past) turn.text += `\n\n${past}`;
   history.push(turn);
+  log('ask:', withScreen ? `${turn.image.length} screen(s)` : 'text only');
 
   // Routing (multi-model providers only): screenshots go to the fast model,
   // which can flag hard problems for the deep model; typed questions go to
@@ -749,6 +763,7 @@ function setClickThrough(on) {
 function setStealth(on) {
   stealth = on;
   win.setContentProtection(on);
+  win.setResizable(!on);
   pushState();
 }
 
@@ -881,6 +896,15 @@ ipcMain.handle('knowledge:remove', async (_e, id) => {
   knowledge.remove(id);
   await reloadKnowledge();
   return knowledge.list();
+});
+
+ipcMain.handle('brief:get', () => ({ text: knowledge.getBrief(), max: knowledge.MAX_BRIEF }));
+ipcMain.handle('brief:set', async (_e, text) => {
+  if (text.trim() === knowledge.getBrief().trim()) return { ok: true };
+  const saved = knowledge.setBrief(text);
+  log('brief', saved ? `set: ${saved.length} chars` : 'cleared');
+  await reloadKnowledge();
+  return providerError ? { ok: false, message: providerError } : { ok: true };
 });
 
 ipcMain.on('listen:toggle', () => setListening(!listening));

@@ -52,6 +52,9 @@ function send() {
   const text = input.value;
   if (!text.trim() && !withScreen.classList.contains('on')) return;
   input.value = '';
+  // "brief: …" sets the Brief instead of asking ("brief:" alone clears it).
+  const brief = text.match(/^\s*\/?brief\s*:\s*([\s\S]*)$/i);
+  if (brief) return saveBrief(brief[1]);
   window.ghost.ask({ text, withScreen: withScreen.classList.contains('on') });
 }
 
@@ -76,8 +79,54 @@ function showIdle(prefix = 'Ready') {
 window.ghost.onState((s) => {
   state = s;
   stealthBtn.classList.toggle('on', s.stealth);
+  document.body.classList.toggle('stealth', s.stealth);
   $('btn-learn').classList.toggle('on', s.learn);
+  $('btn-brief').classList.toggle('on', s.brief);
   showIdle();
+});
+
+// ---------- Brief ----------
+
+const briefForm = $('brief');
+const briefMsg = $('brief-msg');
+
+async function openBrief() {
+  if (!settingsForm.hidden) closeSettings();
+  const { text, max } = await window.ghost.getBrief();
+  briefForm.elements.text.value = text;
+  briefForm.elements.text.maxLength = max;
+  briefMsg.textContent = '';
+  briefMsg.className = 'settings-msg';
+  panelEl.classList.add('in-settings');
+  briefForm.hidden = false;
+  briefForm.elements.text.focus();
+}
+
+function closeBrief() {
+  panelEl.classList.remove('in-settings');
+  briefForm.hidden = true;
+}
+
+// Saving restarts the AI with the new brief (a second or two).
+async function saveBrief(text) {
+  setStatus(text.trim() ? 'Saving brief…' : 'Clearing brief…', 'busy');
+  const result = await window.ghost.setBrief(text);
+  if (!result.ok) return setStatus(result.message, 'err');
+  setStatus(text.trim() ? 'Brief saved: answers will follow it' : 'Brief cleared');
+  setTimeout(() => showIdle(), 2500);
+}
+
+$('btn-brief').addEventListener('click', () => (briefForm.hidden ? openBrief() : closeBrief()));
+$('brief-cancel').addEventListener('click', closeBrief);
+$('brief-clear').addEventListener('click', () => { briefForm.elements.text.value = ''; briefForm.elements.text.focus(); });
+briefForm.elements.text.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); briefForm.requestSubmit(); }
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !briefForm.hidden) closeBrief(); });
+briefForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  closeBrief();
+  saveBrief(briefForm.elements.text.value);
 });
 
 window.ghost.onStatus((text) => setStatus(text, 'busy'));
@@ -324,6 +373,7 @@ function showProviderFields() {
 }
 
 async function openSettings() {
+  if (!briefForm.hidden) closeBrief();
   const { values, defaults, speechModels } = await window.ghost.getSettings();
   settingsDefaults = defaults;
   const f = settingsForm.elements;
