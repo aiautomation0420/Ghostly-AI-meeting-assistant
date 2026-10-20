@@ -681,21 +681,28 @@ async function onSegment(seg) {
     if (who === 'them') speculate(seg);
     return;
   }
+  if (kind === 'ended') { // a long monologue ended; its pieces are already in the transcript
+    if (who === 'them') suggest({ since: seg.endedAt });
+    return;
+  }
 
-  // Final: the utterance really ended.
+  // Final: the utterance really ended (or a long monologue's piece: see audio.js).
   const spec = speculations.get(segId);
   speculations.delete(segId);
+  // Nothing usable in the last bit of a long monologue: still answer its pieces.
+  const answerPieces = () => { if (listening && who === 'them' && seg.afterPiece) suggest({ since: seg.endedAt }); };
   try {
     if (spec) {
       const text = await spec.textPromise;
-      if (!text || !listening) return spec.cancel();
+      if (!text || !listening) { spec.cancel(); return answerPieces(); }
       commitLine({ who, text, at: seg.endedAt });
       spec.confirm();
       return;
     }
     const text = await transcribeLogged(who, seg.samples, who === 'them' ? 1 : 0);
-    if (!text || !listening) return;
-    if (commitLine({ who, text, at: seg.endedAt }) && who === 'them') suggest({ since: seg.endedAt });
+    if (!text || !listening) return answerPieces();
+    // A piece of a long monologue (ended: false) is only transcribed: answer once they pause.
+    if (commitLine({ who, text, at: seg.endedAt }) && who === 'them' && seg.ended !== false) suggest({ since: seg.endedAt });
   } catch (err) {
     log('transcribe error:', err.message);
     win.webContents.send('listen:state', { on: listening, error: err.message });

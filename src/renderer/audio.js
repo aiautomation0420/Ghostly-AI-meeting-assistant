@@ -6,8 +6,12 @@
 //   kind 'tentative' — a short pause (250 ms): speech has probably ended, so
 //                      work can start early
 //   kind 'cancel'    — speech resumed after a tentative; discard that work
-//   kind 'final'     — the utterance really ended (600 ms pause) or hit the
-//                      length limit; same segId as its tentative, if any
+//   kind 'final'     — the utterance really ended (600 ms pause; ended: true)
+//                      or hit the length limit mid-speech (ended: false: a
+//                      piece of a long monologue, transcribed but not answered);
+//                      same segId as its tentative, if any
+//   kind 'ended'     — a long monologue ended with too little speech after
+//                      its last piece to transcribe: time to answer it
 // endedAt is when the speech itself stopped (not when the pause was confirmed).
 window.audioCapture = (() => {
   const SAMPLE_RATE = 16000;
@@ -15,7 +19,7 @@ window.audioCapture = (() => {
   const PREROLL_MS = 300;    // keep a little audio from before speech started
   const TENTATIVE_SILENCE_MS = 250; // pause that probably ends an utterance
   const END_SILENCE_MS = 600; // pause that ends an utterance
-  const MAX_SEGMENT_MS = 12000;
+  const MAX_SEGMENT_MS = 12000; // Whisper's window is ~15 s; longer talk is sent in pieces
   const MIN_SPEECH_MS = 300;
   let segCounter = 0;
 
@@ -41,6 +45,7 @@ window.audioCapture = (() => {
       this.speechMs = 0;
       this.segId = null;
       this.tentativeSent = false;
+      this.pieceSent = false; // the current utterance already sent a length-limit piece
       this.stats = { frames: 0, segments: 0, floor: 0 };
     }
 
@@ -94,8 +99,9 @@ window.audioCapture = (() => {
       const lengthMs = this.frames.length * FRAME_MS;
       if (this.silenceMs >= END_SILENCE_MS) {
         this.flush(true);
-      } else if (lengthMs >= MAX_SEGMENT_MS) {
-        this.flush(false); // long monologue: send what we have, keep listening
+      } else if (lengthMs >= MAX_SEGMENT_MS && this.silenceMs === 0) {
+        // Long monologue: send a piece, cut mid-speech so a pause still decides the end.
+        this.flush(false);
       } else if (!this.tentativeSent && this.silenceMs >= TENTATIVE_SILENCE_MS && this.speechMs >= MIN_SPEECH_MS) {
         this.tentativeSent = true;
         this.onSegment({
@@ -115,13 +121,16 @@ window.audioCapture = (() => {
       this.silenceMs = 0;
       this.tentativeSent = false;
       this.segId = `${this.who}-${++segCounter}`; // a long monologue continues as a new segment
+      const afterPiece = this.pieceSent;
+      this.pieceSent = !ended;
       if (ended) this.inSpeech = false;
       if (speechMs < MIN_SPEECH_MS) {
         this.onSegment({ who: this.who, kind: 'cancel', segId });
+        if (ended && afterPiece) this.onSegment({ who: this.who, kind: 'ended', endedAt });
         return;
       }
       this.stats.segments++;
-      this.onSegment({ who: this.who, kind: 'final', segId, samples, endedAt });
+      this.onSegment({ who: this.who, kind: 'final', ended, afterPiece, segId, samples, endedAt });
     }
   }
 
