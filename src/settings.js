@@ -21,7 +21,9 @@ const ENV = {
   meSpeech: 'WHISPER_MODEL_ME',
   themSpeech: 'WHISPER_MODEL_THEM',
   stealth: 'GHOST_STEALTH',
+  opacity: 'GHOST_OPACITY', // overlay background opacity in percent (text stays solid)
   learn: 'GHOST_LEARN', // '0' = don't save interviews to the knowledge base
+  notes: 'GHOST_NOTES', // '0' = don't save notes after a call
 };
 
 const FILE = path.join(app.getPath('userData'), 'settings.json');

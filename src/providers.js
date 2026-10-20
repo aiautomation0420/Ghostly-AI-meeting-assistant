@@ -269,9 +269,11 @@ function createClaudeCode() {
   // conversation; `seen` counts how much of the shared history it has, so
   // turns answered by other models can be passed along as text.
   class Worker {
-    constructor(tier, system) {
+    // warm: send the startup message (skipped for one-off requests).
+    constructor(tier, system, { warm = true } = {}) {
       this.tier = tier;
       this.system = system;
+      this.warm = warm;
       this.modelId = null;
       this.start();
     }
@@ -297,12 +299,20 @@ function createClaudeCode() {
       proc.on('error', (err) => this.fail(new ProviderError(err.code === 'ENOENT' ? CLI_MISSING : err.message)));
       proc.on('exit', (code) => this.fail(new ProviderError(`Claude Code exited (${code}). ${this.stderr.trim().slice(-300)}`)));
       readline.createInterface({ input: proc.stdout }).on('line', (line) => this.onLine(line));
+      // The CLI only finishes starting up on its first message (~2-3 s), so
+      // send a throwaway one now; real requests wait for it (see send).
+      if (!this.warm) return;
+      const warming =this.write([{ type: 'text', text: 'Connection check: reply with just OK.' }], () => {})
+        .catch(() => {})
+        .finally(() => { if (this.warming === warming) this.warming = null; });
+      this.warming = warming;
     }
 
     fail(err) {
       const t = this.turn;
       this.turn = null;
       this.proc = null;
+      this.lastError = err;
       t?.reject(err);
     }
 
@@ -311,6 +321,7 @@ function createClaudeCode() {
       const t = this.turn;
       this.turn = null;
       t?.reject(stoppedError());
+      this.warming = null;
       if (!this.proc) return;
       this.proc.removeAllListeners('exit');
       this.proc.kill();
@@ -342,8 +353,15 @@ function createClaudeCode() {
       }
     }
 
-    send(content, onText) {
+    async send(content, onText) {
       if (!this.proc) this.start();
+      while (this.warming) await this.warming; // loops if it restarted meanwhile
+      if (!this.proc) { this.start(); while (this.warming) await this.warming; } // died while starting: one retry
+      if (!this.proc) throw this.lastError || new ProviderError('Claude Code failed to start.');
+      return this.write(content, onText);
+    }
+
+    write(content, onText) {
       return new Promise((resolve, reject) => {
         this.turn = { onText, resolve, reject, text: '' };
         this.proc.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n');
@@ -382,6 +400,12 @@ function createClaudeCode() {
         workers[tier]?.stop();
         workers[tier] = new Worker(tier, system);
       }
+    },
+
+    // True while a tier's process is still starting up; a request sent then
+    // waits for it (~3 s to first words instead of ~1 s).
+    warming(tier) {
+      return Boolean(workers[tier]?.warming);
     },
 
     // Start one tier's process if it isn't running yet.
@@ -456,7 +480,7 @@ function createClaudeCode() {
 
     // Read all text from an image, using a temporary worker that's stopped afterwards.
     async readImage({ image, text }) {
-      const worker = new Worker('util', 'You transcribe documents accurately.');
+      const worker = new Worker('util', 'You transcribe documents accurately.', { warm: false });
       const timeout = setTimeout(() => worker.fail(new ProviderError('Reading the image took too long.')), 120000);
       try {
         const r = await worker.send([
@@ -472,7 +496,7 @@ function createClaudeCode() {
 
     // One-off text job on a temporary worker, so the warm ones aren't disturbed.
     async complete({ system, text }) {
-      const worker = new Worker('util', system);
+      const worker = new Worker('util', system, { warm: false });
       const timeout = setTimeout(() => worker.fail(new ProviderError('The AI took too long.')), 300000);
       try {
         return (await worker.send([{ type: 'text', text }], () => {})).text;

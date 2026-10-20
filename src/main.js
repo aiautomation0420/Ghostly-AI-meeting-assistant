@@ -2,7 +2,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const {
-  app, BrowserWindow, globalShortcut, ipcMain, desktopCapturer, dialog, screen, session, Tray, Menu, nativeImage,
+  app, BrowserWindow, globalShortcut, ipcMain, desktopCapturer, dialog, screen, session, Tray, Menu, nativeImage, shell,
 } = require('electron');
 const fs = require('fs');
 // Saved settings override .env; load them before anything reads the environment.
@@ -50,8 +50,7 @@ const TIER_PROMPTS = {
 
 const LIVE_PROMPT = `You help the user during a live conversation (a call, meeting, or interview). You receive a rolling transcript: "Them" is the other person or people, "Me" is the user. It comes from speech recognition, so expect small errors.
 - Each message marks which lines are NEW. Judge only the NEW lines; earlier lines and your earlier replies are context. A follow-up question is a new question even if it is on the same topic.
-- When Them, in the NEW lines, asks the user a question or says something the user clearly needs to respond to, reply with what the user could say.
-- Otherwise reply with exactly SKIP and nothing else.
+- When Them, in the NEW lines, asks the user a question or says something the user clearly needs to respond to, reply with what the user could say.- Otherwise reply with exactly SKIP and nothing else.
 
 Output format (nothing before it):
 "<what the user says: natural first-person wording, 1-3 short sentences>"
@@ -97,7 +96,8 @@ let currentAbort = null;   // AbortController for the in-flight answer
 // Live audio
 // Speech-to-text: the other person ("them") uses the fast model so suggestions
 // stay quick; your mic ("me") uses the more accurate small.en when installed,
-// since its speed doesn't hold up suggestions.
+// since its speed doesn't hold up suggestions. Both share the CPU, so "them"
+// runs at higher priority: the mic waits, the question never does.
 const speechModels = () => {
   const them = process.env.WHISPER_MODEL_THEM || process.env.WHISPER_MODEL || 'base.en';
   const me = process.env.WHISPER_MODEL_ME || (hasModel('small.en') ? 'small.en' : them);
@@ -106,8 +106,10 @@ const speechModels = () => {
 let transcribers;
 function makeTranscribers() {
   const { them, me } = speechModels();
-  transcribers = { them: createTranscriber({ log, model: them, threads: 6 }) };
-  transcribers.me = me === them ? transcribers.them : createTranscriber({ log, model: me, threads: 5 });
+  const { PRIORITY_ABOVE_NORMAL, PRIORITY_BELOW_NORMAL } = require('os').constants.priority;
+  transcribers = { them: createTranscriber({ log, model: them, threads: 6, priority: PRIORITY_ABOVE_NORMAL }) };
+  transcribers.me = me === them ? transcribers.them
+    : createTranscriber({ log, model: me, threads: 5, priority: PRIORITY_BELOW_NORMAL });
 }
 function stopTranscribers() {
   transcribers.them.stop();
@@ -168,6 +170,7 @@ function pushState() {
     clickThrough,
     learn: learnOn(),
     brief: Boolean(knowledge.getBrief()),
+    opacity: opacity(),
     model: provider?.model ? `${provider.label} · ${provider.model}` : '',
     error: providerError,
   });
@@ -201,6 +204,7 @@ function updateTrayMenu() {
     { label: 'Show overlay', click: showOverlay },
     { label: 'Hide overlay', click: () => win.hide() },
     { label: 'Reset position', click: resetPosition },
+    { label: 'Open notes folder', click: () => { fs.mkdirSync(NOTES_DIR, { recursive: true }); shell.openPath(NOTES_DIR); } },
     { type: 'separator' },
     { label: 'Stealth (hide from screen share)', type: 'checkbox', checked: stealth, click: (i) => setStealth(i.checked) },
     { label: 'Click-through', type: 'checkbox', checked: clickThrough, click: (i) => setClickThrough(i.checked) },
@@ -210,8 +214,8 @@ function updateTrayMenu() {
   ]));
 }
 
+// Click-through stays as it is: only Ctrl+Alt+X (or the tray) changes it.
 function showOverlay() {
-  if (clickThrough) setClickThrough(false);
   win.show();
 }
 
@@ -462,6 +466,51 @@ async function learn(lines) {
   }
 }
 
+// ---------- Notes after a call ----------
+// Readable notes for the user (Learn is for the AI), saved as Markdown in
+// Documents\Ghostly Notes when listening stops or the session is cleared.
+
+const NOTES_PROMPT = `You write notes for the user after a call, meeting or interview. The transcript comes from speech recognition, so expect small errors: "Them" is the other person or people, "Me" is the user.
+
+Write Markdown in plain, everyday words:
+# <short title, e.g. "Interview with Acme for AI Automation Specialist">
+## Summary
+2-4 bullets: what the call was about and how it went.
+## Questions they asked
+Each question in bold, then one line on what I answered, taken only from my own "Me" lines; if there are none for it, write "(my answer wasn't captured)". Never guess what I said from their reaction. Leave this section out if they asked me no questions.
+## Next steps
+Promises, deadlines, follow-ups, what happens next. Write "None mentioned" if there are none.
+## Details to remember
+Names, companies, dates, numbers, tools, salary or rates. Leave this section out if there are none.
+
+Only use what is in the transcript; never invent anything. If it has no real conversation, reply with exactly NONE.`;
+
+const NOTES_DIR = path.join(app.getPath('documents'), 'Ghostly Notes');
+const notesOn = () => process.env.GHOST_NOTES !== '0';
+
+async function takeNotes(lines) {
+  if (!notesOn() || lines.filter((l) => l.who === 'them').length < 3) return;
+  let notes;
+  try {
+    if (!(await providerReady(15000)) || providerError) throw new Error(providerError || 'AI not ready');
+    notes = (await provider.complete({ system: NOTES_PROMPT, text: lines.map(fmtLine).join('\n') })).trim();
+    if (notes === 'NONE') return log('notes: no conversation found');
+  } catch (err) {
+    log('notes failed, saving the transcript only:', err.message);
+    notes = `# Call notes\n\n(The AI couldn't write notes: ${err.message})`;
+  }
+  const when = new Date(lines[0].at);
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} ${pad(when.getHours())}-${pad(when.getMinutes())}`;
+  const title = (notes.match(/^#\s+(.+)/m)?.[1] || 'Call notes').replace(/[\\/:*?"<>|]/g, '').trim().slice(0, 60);
+  const file = path.join(NOTES_DIR, `${stamp} ${title}.md`);
+  const said = lines.map((l) => `**${l.who === 'them' ? 'Them' : 'Me'}:** ${l.text}`).join('\n\n');
+  fs.mkdirSync(NOTES_DIR, { recursive: true });
+  fs.writeFileSync(file, `${notes}\n\n---\n\n## Transcript\n\n${said}\n`);
+  log('notes saved:', path.basename(file));
+  win?.webContents.send('status', 'Notes saved (tray → Open notes folder)');
+}
+
 function savePending(lines) {
   if (!lines.length) return;
   let saved = [];
@@ -519,7 +568,9 @@ async function setListening(on) {
     win.webContents.send('listen:stop');
     win.webContents.send('listen:state', { on: false });
     log('listening off');
-    learn(unlearned());
+    const lines = unlearned();
+    learn(lines);
+    takeNotes(lines);
     return;
   }
   win.webContents.send('listen:state', { on: true, status: 'Starting speech-to-text…' });
@@ -603,8 +654,7 @@ function speculate({ segId, samples, endedAt }) {
   };
   spec.confirm = () => {
     spec.confirmed = true;
-    if (spec.checkedUpTo) live.checkedUpTo = Math.max(live.checkedUpTo, spec.checkedUpTo);
-    for (const [channel, data] of spec.buffered) {
+    if (spec.checkedUpTo) live.checkedUpTo = Math.max(live.checkedUpTo, spec.checkedUpTo);    for (const [channel, data] of spec.buffered) {
       // Report when the suggestion actually appeared, not when it was drafted.
       if (channel === 'suggest:timing' && data.firstMs != null) data.firstMs = Date.now() - spec.since;
       win.webContents.send(channel, data);
@@ -667,7 +717,9 @@ async function suggest({ force = false, since = Date.now(), extraLine = null, ga
   // except for early guesses, which are redone once the pause is confirmed.
   if (!provider && !providerError && !gate) await providerReady(15000);
   if (!provider || providerError) return;
-  const slot = LIVE_SLOTS.find((s) => !slotBusy[s]);
+  // Prefer a slot whose process isn't still starting up (it was just recycled).
+  const slot = LIVE_SLOTS.find((s) => !slotBusy[s] && !provider.warming?.(s))
+    || LIVE_SLOTS.find((s) => !slotBusy[s]);
   if (!slot) {
     if (gate) return; // skip the early guess; the confirmed pause runs a normal check
     live.pending = true;
@@ -691,10 +743,12 @@ async function suggest({ force = false, since = Date.now(), extraLine = null, ga
   let decided = false;
   let skipped = false;
   let started = false;
+  let firstMs = null;
   const emit = (s) => {
     if (skipped || !s) return;
     if (!started) {
       started = true;
+      firstMs = Date.now() - since;
       send('suggest:start', { model: provider.tierName?.(slot) ?? provider.model });
       send('suggest:timing', { firstMs: Date.now() - since });
     }
@@ -730,7 +784,8 @@ async function suggest({ force = false, since = Date.now(), extraLine = null, ga
     if (!decided && !buffer.trim().startsWith('SKIP')) emit(buffer);
     if (started) send('suggest:timing', { totalMs: Date.now() - since });
     const outcome = gate?.cancelled ? 'discarded (they kept talking)' : started ? 'shown' : 'skip';
-    log(`suggest${gate ? ' (early)' : ''}: ${outcome} in ${Date.now() - since}ms${
+    log(`suggest${gate ? ' (early)' : ''} [${slot}]: ${outcome} in ${Date.now() - since}ms${
+      firstMs != null ? `, first words ${firstMs}ms` : ''}${
       DEBUG && started ? `: ${full.replace(/\n/g, ' | ').slice(0, 300)}` : ''}`);
   } catch (err) {
     // `stopped`: its model was restarted on purpose (Clear, settings change).
@@ -760,6 +815,15 @@ function setClickThrough(on) {
   pushState();
 }
 
+// Overlay background opacity in percent (Settings slider, Ctrl+Alt+Up/Down).
+const DEFAULT_OPACITY = 80;
+const opacity = () => Number(process.env.GHOST_OPACITY) || DEFAULT_OPACITY;
+function changeOpacity(delta) {
+  const next = Math.min(100, Math.max(10, opacity() + delta));
+  settings.save({ opacity: next === DEFAULT_OPACITY ? '' : String(next) });
+  pushState();
+}
+
 function setStealth(on) {
   stealth = on;
   win.setContentProtection(on);
@@ -770,7 +834,9 @@ function setStealth(on) {
 function resetSession() {
   currentAbort?.abort();
   provider?.reset?.();
-  learn(unlearned());
+  const lines = unlearned();
+  learn(lines);
+  takeNotes(lines);
   history = [];
   transcript = [];
   win.webContents.send('reset');
@@ -781,24 +847,40 @@ function moveBy(dx, dy) {
   win.setPosition(x + dx, y + dy);
 }
 
+// Shown in the Keys panel, with whether each one registered (another app
+// may already own it).
+let hotkeys = [];
+
 function registerShortcuts() {
   const step = 60;
-  const shortcuts = {
-    'CommandOrControl+\\': toggleVisible,
-    'CommandOrControl+Shift+Enter': () => { win.showInactive(); ask({ withScreen: true }); },
-    'CommandOrControl+Alt+X': () => setClickThrough(!clickThrough),
-    'CommandOrControl+Shift+R': resetSession,
-    'CommandOrControl+Shift+L': () => setListening(!listening),
-    'CommandOrControl+Shift+Space': () => { win.showInactive(); suggest({ force: true }); },
-    'CommandOrControl+Shift+Up': () => moveBy(0, -step),
-    'CommandOrControl+Shift+Down': () => moveBy(0, step),
-    'CommandOrControl+Shift+Left': () => moveBy(-step, 0),
-    'CommandOrControl+Shift+Right': () => moveBy(step, 0),
-  };
-  for (const [accel, fn] of Object.entries(shortcuts)) {
-    if (!globalShortcut.register(accel, fn)) log(`Could not register hotkey ${accel}`);
-  }
+  const defs = [
+    ['Ctrl+Shift+Enter', 'Ask about your screen', { 'CommandOrControl+Shift+Enter': () => { win.showInactive(); ask({ withScreen: true }); } }],
+    ['Ctrl+Shift+L', 'Start / stop listening to the call', { 'CommandOrControl+Shift+L': () => setListening(!listening) }],
+    ['Ctrl+Shift+Space', 'What should I say? (suggest a reply now)', { 'CommandOrControl+Shift+Space': () => { win.showInactive(); suggest({ force: true }); } }],
+    ['Ctrl+\\', 'Show / hide the overlay', { 'CommandOrControl+\\': toggleVisible }],
+    ['Ctrl+Shift+Arrows', 'Move the overlay', {
+      'CommandOrControl+Shift+Up': () => moveBy(0, -step),
+      'CommandOrControl+Shift+Down': () => moveBy(0, step),
+      'CommandOrControl+Shift+Left': () => moveBy(-step, 0),
+      'CommandOrControl+Shift+Right': () => moveBy(step, 0),
+    }],
+    ['Ctrl+Alt+X', 'Click-through (mouse passes through)', { 'CommandOrControl+Alt+X': () => setClickThrough(!clickThrough) }],
+    ['Ctrl+Alt+↑↓', 'Background more solid / more transparent', {
+      'CommandOrControl+Alt+Up': () => changeOpacity(10),
+      'CommandOrControl+Alt+Down': () => changeOpacity(-10),
+    }],
+    ['Ctrl+Shift+R', 'New session (clear history and transcript)', { 'CommandOrControl+Shift+R': resetSession }],
+  ];
+  hotkeys = defs.map(([keys, action, accels]) => {
+    let ok = true;
+    for (const [accel, fn] of Object.entries(accels)) {
+      if (!globalShortcut.register(accel, fn)) { ok = false; log(`Could not register hotkey ${accel}`); }
+    }
+    return { keys, action, ok };
+  });
 }
+
+ipcMain.handle('hotkeys:get', () => hotkeys);
 
 ipcMain.handle('ask', (_e, payload) => ask(payload));
 ipcMain.on('set-stealth', (_e, on) => setStealth(on));
@@ -845,6 +927,7 @@ ipcMain.handle('settings:save', async (_e, values) => {
     await setListening(true);
   }
   if (changed('stealth')) setStealth(after.stealth !== '0');
+  else if (changed('opacity')) pushState();
   return providerError ? { ok: false, message: providerError } : { ok: true };
 });
 
@@ -951,6 +1034,15 @@ function cleanupOrphans() {
     else if (n) log('stopped', n, 'leftover helper process(es) from an earlier run');
   });
 }
+
+// One Ghostly at a time: a second launch shows the running overlay and exits.
+if (!app.requestSingleInstanceLock()) {
+  log('already running: showing the open overlay');
+  app.exit(0);
+}
+app.on('second-instance', () => {
+  if (win) showOverlay();
+});
 
 app.on('child-process-gone', (_e, d) => log('child process gone:', d.type, d.reason, d.exitCode));
 app.on('before-quit', () => log('app before-quit'));

@@ -28,7 +28,10 @@ Click **⚙** on the overlay to choose the AI service (and its key), which Claud
 | `Ctrl+\` | Show / hide overlay |
 | `Ctrl+Shift+Arrows` | Move overlay |
 | `Ctrl+Alt+X` | Toggle click-through (mouse passes through) |
+| `Ctrl+Alt+Up` / `Ctrl+Alt+Down` | Background more solid / more transparent (also in Settings; text stays solid) |
 | `Ctrl+Shift+R` | New session (clear history and transcript) |
+
+Click **Keys** on the overlay to see this list any time, with a check that each hotkey is working (✗ means another app already uses it).
 
 Type in the box at the bottom for follow-ups; switch off the **screen** toggle to ask without a screenshot.
 
@@ -53,6 +56,10 @@ Speech-to-text uses two models: the fast `base.en` for the other person (keeps s
 ## Learning from interviews
 
 With **Learn** on (the default), stopping Listen or pressing Clear turns the conversation into notes: for each question asked, the question, its topics, a summary of what you said, and a better answer built from your answer and your knowledge-base files. They're saved as 🎙️ entries in the knowledge base (delete any in Settings). When a similar question comes up later, the closest notes are added to the request, so suggestions reuse the better answers. Matching is by shared keywords, so a question worded very differently may not find its notes. Quitting mid-interview saves the transcript and learns it on the next start. Turn **Learn** off to keep an interview out of the knowledge base. `node scripts/test-recall.js` checks the lookup.
+
+## Notes after a call
+
+When you stop **Listen** or press **Clear** after a real conversation, Ghostly writes notes for you: a summary, the questions they asked and what you answered, next steps, and details to remember (names, dates, pay), with the full transcript at the end. They're saved as Markdown in `Documents\Ghostly Notes` (tray → **Open notes folder**). Turn it off in Settings. Notes are written after the call on a separate connection, so they never slow down live answers; quitting mid-call skips them.
 
 ## Models (claude-code provider)
 

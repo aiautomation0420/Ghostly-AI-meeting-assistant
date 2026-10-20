@@ -78,8 +78,9 @@ function listModels() {
 }
 
 // model: e.g. 'base.en' (default: the first model found). threads: CPU
-// threads for this server (default: all but two).
-function createTranscriber({ log = () => {}, model: modelName, threads: threadCount } = {}) {
+// threads for this server (default: all but two). priority: an
+// os.constants.priority value for the server process.
+function createTranscriber({ log = () => {}, model: modelName, threads: threadCount, priority } = {}) {
   let proc = null;
   let ready = null;
   let port = 0;
@@ -109,6 +110,9 @@ function createTranscriber({ log = () => {}, model: modelName, threads: threadCo
     if (process.env.WHISPER_ARGS) args.push(...process.env.WHISPER_ARGS.split(/\s+/).filter(Boolean));
     const p = spawn(server, args, { cwd: path.dirname(server), windowsHide: true });
     proc = p;
+    if (priority != null && p.pid) {
+      try { os.setPriority(p.pid, priority); } catch (err) { log('whisper-server priority not set:', err.message); }
+    }
     let output = '';
     p.stdout.on('data', (d) => { output += d; });
     p.stderr.on('data', (d) => { output += d; });

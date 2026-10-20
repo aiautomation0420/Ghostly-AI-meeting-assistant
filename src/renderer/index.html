@@ -18,6 +18,7 @@
         <button id="btn-stealth" class="toggle" title="Hide overlay from screen share / screenshots">Stealth</button>
         <button id="btn-clear" title="New session (Ctrl+Shift+R)">Clear</button>
         <button id="btn-brief" class="toggle" title="Tell the AI what you're doing right now (or type brief: … in the chat box)">Brief</button>
+        <button id="btn-keys" class="toggle" title="Keyboard shortcuts">Keys</button>
         <button id="btn-settings" title="Settings">Settings</button>
         <button id="btn-hide" title="Hide (Ctrl+\)">Hide</button>
       </div>
@@ -50,6 +51,16 @@
         <button type="submit" class="primary">Save</button>
       </div>
     </form>
+
+    <div class="settings" id="keys" hidden>
+      <h3>Keyboard shortcuts</h3>
+      <p class="hint">These work anywhere, even when Ghostly isn't focused. A red mark means another app already uses that key, so it won't work until that app lets it go (then restart Ghostly).</p>
+      <ul class="keys-list" id="keys-list"></ul>
+      <div class="settings-actions">
+        <span class="settings-msg" id="keys-msg"></span>
+        <button type="button" id="keys-close">Close</button>
+      </div>
+    </div>
 
     <form class="settings" id="settings" hidden>
       <h3>AI</h3>
@@ -90,6 +101,10 @@
 
       <h3>General</h3>
       <label class="chk"><input name="stealth" type="checkbox" /> Stealth: hide overlay from screenshots &amp; screen sharing</label>
+      <label class="chk"><input name="notes" type="checkbox" /> Save notes after each call (Documents\Ghostly Notes; tray → Open notes folder)</label>
+      <label>Background opacity: <span id="opacity-value"></span> (text stays solid)
+        <input name="opacity" type="range" min="10" max="100" step="5" />
+      </label>
 
       <div class="settings-actions">
         <span class="settings-msg" id="settings-msg"></span>

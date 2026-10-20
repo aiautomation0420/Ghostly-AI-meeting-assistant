@@ -82,8 +82,56 @@ window.ghost.onState((s) => {
   document.body.classList.toggle('stealth', s.stealth);
   $('btn-learn').classList.toggle('on', s.learn);
   $('btn-brief').classList.toggle('on', s.brief);
+  if (settingsForm.hidden) setOpacity(s.opacity); // while open, the slider previews instead
   showIdle();
 });
+
+// ---------- Keys ----------
+
+const keysPanel = $('keys');
+
+async function openKeys() {
+  if (!briefForm.hidden) closeBrief();
+  if (!settingsForm.hidden) closeSettings();
+  const hotkeys = await window.ghost.getHotkeys();
+  const list = $('keys-list');
+  list.replaceChildren(...hotkeys.map(({ keys, action, ok }) => {
+    const li = document.createElement('li');
+    const mark = document.createElement('span');
+    mark.className = `keys-mark ${ok ? 'ok' : 'bad'}`;
+    mark.textContent = ok ? '✓' : '✗';
+    mark.title = ok ? 'Working' : 'Taken by another app';
+    const combo = document.createElement('span');
+    combo.className = 'keys-combo';
+    for (const [i, part] of keys.split('+').entries()) {
+      if (i) combo.append('+');
+      const kbd = document.createElement('kbd');
+      kbd.textContent = part === 'Arrows' ? '←↑↓→' : part;
+      combo.append(kbd);
+    }
+    const label = document.createElement('span');
+    label.textContent = action;
+    li.append(mark, combo, label);
+    return li;
+  }));
+  const bad = hotkeys.filter((h) => !h.ok).length;
+  const msg = $('keys-msg');
+  msg.textContent = bad ? `${bad} shortcut${bad > 1 ? 's' : ''} not working` : 'All shortcuts working';
+  msg.className = `settings-msg${bad ? ' err' : ''}`;
+  panelEl.classList.add('in-settings');
+  keysPanel.hidden = false;
+  $('btn-keys').classList.add('on');
+}
+
+function closeKeys() {
+  panelEl.classList.remove('in-settings');
+  keysPanel.hidden = true;
+  $('btn-keys').classList.remove('on');
+}
+
+$('btn-keys').addEventListener('click', () => (keysPanel.hidden ? openKeys() : closeKeys()));
+$('keys-close').addEventListener('click', closeKeys);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !keysPanel.hidden) closeKeys(); });
 
 // ---------- Brief ----------
 
@@ -92,6 +140,7 @@ const briefMsg = $('brief-msg');
 
 async function openBrief() {
   if (!settingsForm.hidden) closeSettings();
+  if (!keysPanel.hidden) closeKeys();
   const { text, max } = await window.ghost.getBrief();
   briefForm.elements.text.value = text;
   briefForm.elements.text.maxLength = max;
@@ -374,6 +423,7 @@ function showProviderFields() {
 
 async function openSettings() {
   if (!briefForm.hidden) closeBrief();
+  if (!keysPanel.hidden) closeKeys();
   const { values, defaults, speechModels } = await window.ghost.getSettings();
   settingsDefaults = defaults;
   const f = settingsForm.elements;
@@ -397,6 +447,9 @@ async function openSettings() {
   fillSelect(f.mic, micOptions, values.mic);
 
   f.stealth.checked = values.stealth !== '0';
+  f.notes.checked = values.notes !== '0';
+  f.opacity.value = state.opacity;
+  $('opacity-value').textContent = `${state.opacity}%`;
   renderKnowledge(await window.ghost.listKnowledge());
   setKbBusy('');
   showProviderFields();
@@ -409,7 +462,18 @@ async function openSettings() {
 function closeSettings() {
   panelEl.classList.remove('in-settings');
   settingsForm.hidden = true;
+  setOpacity(state.opacity); // undo an unsaved slider preview
 }
+
+// Background opacity (percent); the text isn't affected.
+function setOpacity(percent) {
+  document.documentElement.style.setProperty('--bg-alpha', String((Number(percent) || 80) / 100));
+}
+
+settingsForm.elements.opacity.addEventListener('input', (e) => {
+  setOpacity(e.target.value);
+  $('opacity-value').textContent = `${e.target.value}%`;
+});
 
 $('btn-settings').addEventListener('click', () => (settingsForm.hidden ? openSettings() : closeSettings()));
 $('settings-cancel').addEventListener('click', closeSettings);
@@ -436,11 +500,14 @@ settingsForm.addEventListener('submit', async (e) => {
     themSpeech: f.themSpeech.value,
     vocab: f.vocab.value,
     stealth: f.stealth.checked ? '' : '0',
+    notes: f.notes.checked ? '' : '0',
+    opacity: orDefault(f.opacity.value, '80'),
   };
   settingsMsg.className = 'settings-msg';
   settingsMsg.textContent = 'Saving…';
   const result = await window.ghost.saveSettings(values);
   if (result.ok) {
+    state.opacity = Number(f.opacity.value); // so closing keeps it (the new state may arrive later)
     closeSettings();
   } else {
     settingsMsg.className = 'settings-msg err';

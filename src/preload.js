@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('ghost', {
   setClickThrough: (on) => ipcRenderer.send('set-click-through', on),
   reset: () => ipcRenderer.send('reset'),
   hide: () => ipcRenderer.send('hide'),
+  getHotkeys: () => ipcRenderer.invoke('hotkeys:get'),
   onState: on('state'),
   onStatus: on('status'),
   onStart: on('answer:start'),
