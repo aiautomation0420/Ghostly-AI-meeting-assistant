@@ -20,6 +20,7 @@ const ENV = {
   vocab: 'GHOST_VOCAB',
   meSpeech: 'WHISPER_MODEL_ME',
   themSpeech: 'WHISPER_MODEL_THEM',
+  pause: 'GHOST_PAUSE_MS', // how long the other person must pause before Ghostly answers
   stealth: 'GHOST_STEALTH',
   opacity: 'GHOST_OPACITY', // overlay background opacity in percent (text stays solid)
   learn: 'GHOST_LEARN', // '0' = don't save interviews to the knowledge base

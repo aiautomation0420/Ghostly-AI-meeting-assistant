@@ -601,7 +601,11 @@ async function setListening(on) {
   }
   const [source] = await desktopCapturer.getSources({ types: ['screen'] });
   if (superseded()) return;
-  win.webContents.send('listen:start', { sourceId: source?.id, nativeSystem, micHint: process.env.GHOST_MIC });
+  win.webContents.send('listen:start', {
+    sourceId: source?.id, nativeSystem, micHint: process.env.GHOST_MIC,
+    // Pauses shorter than this are mid-sentence (a breath, thinking), not the end.
+    themPauseMs: Number(process.env.GHOST_PAUSE_MS) || 1000,
+  });
 }
 
 // Add a transcribed line to the transcript (echo-filtered) and refresh the
@@ -632,6 +636,23 @@ async function transcribeLogged(who, samples, priority, label = '') {
   return text;
 }
 
+// The last suggestion card shown (from: where the lines it answered start).
+// Soon after it, the next suggestion either replaces it (the user hasn't
+// spoken: Them paused mid-question, then went on) or continues from what the
+// user has started saying. Kept short: a real pause-and-continue comes within
+// seconds, and a muted mic must not merge separate questions.
+let lastCard = null; // { id, at, from }
+
+function lastCardState() {
+  if (!lastCard || Date.now() - lastCard.at > 20000) return 'none';
+  return transcript.some((l) => l.who === 'me' && l.at > lastCard.at) ? 'answered' : 'open';
+}
+
+function showSuggestion(channel, data) {
+  if (channel === 'suggest:start') lastCard = { id: data.id, at: Date.now(), from: data.from };
+  win.webContents.send(channel, data);
+}
+
 // Early work started on a short pause, keyed by segment id. If the pause is
 // confirmed, the transcript and suggestion are reused; if the person keeps
 // talking, they're thrown away (never shown).
@@ -654,10 +675,11 @@ function speculate({ segId, samples, endedAt }) {
   };
   spec.confirm = () => {
     spec.confirmed = true;
-    if (spec.checkedUpTo) live.checkedUpTo = Math.max(live.checkedUpTo, spec.checkedUpTo);    for (const [channel, data] of spec.buffered) {
+    if (spec.checkedUpTo) live.checkedUpTo = Math.max(live.checkedUpTo, spec.checkedUpTo);
+    for (const [channel, data] of spec.buffered) {
       // Report when the suggestion actually appeared, not when it was drafted.
       if (channel === 'suggest:timing' && data.firstMs != null) data.firstMs = Date.now() - spec.since;
-      win.webContents.send(channel, data);
+      showSuggestion(channel, data);
     }
     spec.buffered = [];
     if (!spec.started) suggest({ since: spec.since }); // no free slot earlier: run it now
@@ -743,7 +765,7 @@ async function suggest({ force = false, since = Date.now(), extraLine = null, ga
     if (gate?.cancelled) return;
     const msg = [channel, { id, ...data }];
     if (gate && !gate.confirmed) gate.buffered.push(msg);
-    else win.webContents.send(...msg);
+    else showSuggestion(...msg);
   };
   let buffer = '';
   let full = '';
@@ -756,7 +778,7 @@ async function suggest({ force = false, since = Date.now(), extraLine = null, ga
     if (!started) {
       started = true;
       firstMs = Date.now() - since;
-      send('suggest:start', { model: provider.tierName?.(slot) ?? provider.model });
+      send('suggest:start', { model: provider.tierName?.(slot) ?? provider.model, replaces, from });
       send('suggest:timing', { firstMs: Date.now() - since });
     }
     send('suggest:delta', { text: s });
@@ -774,9 +796,13 @@ async function suggest({ force = false, since = Date.now(), extraLine = null, ga
 
   // Split the window into context and the lines that arrived since the last
   // check, so a follow-up question isn't mistaken for one already handled.
+  // A replacement answers everything its card answered plus what came after.
+  const card = force ? 'none' : lastCardState();
+  const replaces = card === 'open' ? lastCard.id : null;
+  const from = replaces != null ? lastCard.from : live.checkedUpTo;
   const recent = lines.slice(-25);
-  const older = recent.filter((l) => l.at <= live.checkedUpTo).map(fmtLine).join('\n');
-  const fresh = recent.filter((l) => l.at > live.checkedUpTo).map(fmtLine).join('\n');
+  const older = recent.filter((l) => l.at <= from).map(fmtLine).join('\n');
+  const fresh = recent.filter((l) => l.at > from).map(fmtLine).join('\n');
   const newest = recent.length ? recent[recent.length - 1].at : live.checkedUpTo;
   if (gate) gate.checkedUpTo = newest; // applied only if the guess is confirmed
   else live.checkedUpTo = newest;
@@ -784,6 +810,8 @@ async function suggest({ force = false, since = Date.now(), extraLine = null, ga
     older && `Earlier (context only, already handled):\n${older}`,
     fresh && pastInterviews(fresh),
     `NEW since your last check (decide based on these):\n${fresh || '(nothing new)'}`,
+    replaces != null && 'Them paused, then kept talking. Your reply replaces your previous suggestion. If the latest NEW lines continue the same question, answer it all as one complete reply. If they ask something different, or check in ("did you get that?", "does that make sense?"), answer only that.',
+    card === 'answered' && 'The user has started answering (their latest Me lines). If you reply, continue from what they said: don\'t restart or repeat it.',
     force && 'The user pressed "What should I say?". Do not reply SKIP: suggest the best thing to say or ask next.',
   ].filter(Boolean).join('\n\n');
   try {
@@ -846,6 +874,7 @@ function resetSession() {
   takeNotes(lines);
   history = [];
   transcript = [];
+  lastCard = null;
   win.webContents.send('reset');
 }
 
@@ -929,7 +958,7 @@ ipcMain.handle('settings:save', async (_e, values) => {
       }
     }
   }
-  if (listening && changed('mic')) {
+  if (listening && changed('mic', 'pause')) {
     await setListening(false);
     await setListening(true);
   }

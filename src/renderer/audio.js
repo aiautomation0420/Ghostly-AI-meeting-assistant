@@ -6,7 +6,7 @@
 //   kind 'tentative' — a short pause (250 ms): speech has probably ended, so
 //                      work can start early
 //   kind 'cancel'    — speech resumed after a tentative; discard that work
-//   kind 'final'     — the utterance really ended (600 ms pause; ended: true)
+//   kind 'final'     — the utterance really ended (a pause; ended: true)
 //                      or hit the length limit mid-speech (ended: false: a
 //                      piece of a long monologue, transcribed but not answered);
 //                      same segId as its tentative, if any
@@ -18,7 +18,7 @@ window.audioCapture = (() => {
   const FRAME_MS = (128 / SAMPLE_RATE) * 1000; // one worklet frame = 8 ms
   const PREROLL_MS = 300;    // keep a little audio from before speech started
   const TENTATIVE_SILENCE_MS = 250; // pause that probably ends an utterance
-  const END_SILENCE_MS = 600; // pause that ends an utterance
+  const END_SILENCE_MS = 600; // pause that ends an utterance (the other person's: themPauseMs setting)
   const MAX_SEGMENT_MS = 12000; // Whisper's window is ~15 s; longer talk is sent in pieces
   const MIN_SPEECH_MS = 300;
   let segCounter = 0;
@@ -33,9 +33,10 @@ window.audioCapture = (() => {
   // so the floor tracks background noise and can't creep up to speech level
   // during long, continuous talking.
   class Segmenter {
-    constructor(who, onSegment) {
+    constructor(who, onSegment, endSilenceMs = END_SILENCE_MS) {
       this.who = who;
       this.onSegment = onSegment;
+      this.endSilenceMs = endSilenceMs;
       this.levels = new Float32Array(Math.round(FLOOR_WINDOW_MS / FRAME_MS)).fill(0.003);
       this.levelIndex = 0;
       this.preroll = [];
@@ -46,6 +47,7 @@ window.audioCapture = (() => {
       this.segId = null;
       this.tentativeSent = false;
       this.pieceSent = false; // the current utterance already sent a length-limit piece
+      this.peak = 0; // loudest frame since takePeak(); exactly 0 means a muted device
       this.stats = { frames: 0, segments: 0, floor: 0 };
     }
 
@@ -59,6 +61,7 @@ window.audioCapture = (() => {
       let sum = 0;
       for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
       const rms = Math.sqrt(sum / frame.length);
+      if (rms > this.peak) this.peak = rms;
       this.levels[this.levelIndex] = rms;
       this.levelIndex = (this.levelIndex + 1) % this.levels.length;
       let floor = Infinity;
@@ -97,7 +100,7 @@ window.audioCapture = (() => {
         this.silenceMs += FRAME_MS;
       }
       const lengthMs = this.frames.length * FRAME_MS;
-      if (this.silenceMs >= END_SILENCE_MS) {
+      if (this.silenceMs >= this.endSilenceMs) {
         this.flush(true);
       } else if (lengthMs >= MAX_SEGMENT_MS && this.silenceMs === 0) {
         // Long monologue: send a piece, cut mid-speech so a pause still decides the end.
@@ -231,12 +234,12 @@ window.audioCapture = (() => {
     ext.carry = data.slice(i);
   }
 
-  async function attach(stream, who, onSegment, onEnded) {
+  async function attach(stream, who, onSegment, onEnded, endSilenceMs) {
     const source = ctx.createMediaStreamSource(stream);
     const node = new AudioWorkletNode(ctx, 'capture', {
       channelCount: 1, channelCountMode: 'explicit', channelInterpretation: 'speakers',
     });
-    const segmenter = new Segmenter(who, onSegment);
+    const segmenter = new Segmenter(who, onSegment, endSilenceMs);
     segmenters.push(segmenter);
     node.port.onmessage = (e) => segmenter.push(e.data);
     const mute = ctx.createGain();
@@ -250,6 +253,15 @@ window.audioCapture = (() => {
     Segmenter, // exposed for tests
     pushExternal,
 
+    // Loudest level from `who` since the last call (null if not capturing it).
+    takePeak(who) {
+      const s = segmenters.find((x) => x.who === who);
+      if (!s) return null;
+      const peak = s.peak;
+      s.peak = 0;
+      return peak;
+    },
+
     // Per-source counters since the last call (frames received, utterances, noise floor).
     takeStats() {
       const out = segmenters.map((s) => ({ who: s.who, ...s.stats, floor: Number(s.stats.floor.toFixed(4)) }));
@@ -259,7 +271,8 @@ window.audioCapture = (() => {
 
     // nativeSystem: computer audio is captured by main's native helper and
     // streamed in via pushExternal, so skip capturing it here.
-    async start({ sourceId, onSegment, onEnded, nativeSystem, micHint }) {
+    // themPauseMs: how long the other person must pause before they're done.
+    async start({ sourceId, onSegment, onEnded, nativeSystem, micHint, themPauseMs }) {
       segmenters = [];
       ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
       await ctx.audioWorklet.addModule('capture-worklet.js');
@@ -267,7 +280,7 @@ window.audioCapture = (() => {
       const ok = [];
       const failed = [];
       if (nativeSystem) {
-        const segmenter = new Segmenter('them', onSegment);
+        const segmenter = new Segmenter('them', onSegment, themPauseMs);
         segmenters.push(segmenter);
         external.them = { segmenter, carry: new Float32Array(0) };
         ok.push('computer audio (native)');
@@ -275,7 +288,7 @@ window.audioCapture = (() => {
         try {
           const system = await getSystemAudio(sourceId);
           streams.push(system.stream);
-          await attach(system.stream, 'them', onSegment, onEnded);
+          await attach(system.stream, 'them', onSegment, onEnded, themPauseMs);
           ok.push(`computer audio (${system.via})`);
         } catch (err) {
           failed.push(`computer audio: ${err.message}`);

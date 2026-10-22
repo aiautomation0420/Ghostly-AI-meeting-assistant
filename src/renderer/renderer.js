@@ -285,7 +285,20 @@ function showLiveHint(text) {
 }
 
 let statsTimer = null;
+let micTimer = null;
 let capturing = false; // false once listening is switched off
+
+// A muted mic sends exact digital silence (a working one always picks up
+// some room noise): warn, since Ghostly then can't follow the conversation.
+function checkMic() {
+  const peak = window.audioCapture.takePeak('me');
+  $('mic-warning').hidden = peak == null || peak > 0;
+}
+
+function stopMicCheck() {
+  clearInterval(micTimer);
+  $('mic-warning').hidden = true;
+}
 
 async function startCapture(opts) {
   if (!capturing) return;
@@ -307,6 +320,9 @@ async function startCapture(opts) {
     window.ghost.listenStarted(result);
     clearInterval(statsTimer);
     statsTimer = setInterval(() => window.ghost.audioStats({ sources: window.audioCapture.takeStats() }), 30000);
+    stopMicCheck();
+    window.audioCapture.takePeak('me'); // start a fresh window
+    micTimer = setInterval(checkMic, 5000);
   } catch (err) {
     window.audioCapture.stop();
     window.ghost.listenFailed(err.message || String(err));
@@ -323,6 +339,7 @@ window.ghost.onPcm((samples) => window.audioCapture.pushExternal('them', samples
 window.ghost.onListenStop(() => {
   capturing = false;
   clearInterval(statsTimer);
+  stopMicCheck();
   window.audioCapture.stop();
 });
 
@@ -351,10 +368,17 @@ window.ghost.onTranscript(({ lines }) => {
 // Suggestions can overlap (two live models), so each has its own block by id.
 const suggestions = new Map();
 
-window.ghost.onSuggestStart(({ id, model }) => {
+// replaces: an earlier card for the same turn (they kept talking): this one
+// takes its place.
+window.ghost.onSuggestStart(({ id, model, replaces }) => {
   $('empty')?.remove();
+  const old = replaces != null && suggestions.get(replaces);
   const block = createBlock(`💬 Suggested reply · ${model}`, 'suggest');
-  block.note = 'after they stopped talking';
+  block.note = old ? 'updated: they kept talking' : 'after they stopped talking';
+  if (old) {
+    old.block.remove();
+    suggestions.delete(replaces);
+  }
   suggestions.set(id, block);
   while (suggestions.size > 20) suggestions.delete(suggestions.keys().next().value);
   scrollToBottom();
@@ -448,6 +472,7 @@ async function openSettings() {
 
   f.stealth.checked = values.stealth !== '0';
   f.notes.checked = values.notes !== '0';
+  f.pause.value = values.pause || '1000';
   f.opacity.value = state.opacity;
   $('opacity-value').textContent = `${state.opacity}%`;
   renderKnowledge(await window.ghost.listKnowledge());
@@ -501,6 +526,7 @@ settingsForm.addEventListener('submit', async (e) => {
     vocab: f.vocab.value,
     stealth: f.stealth.checked ? '' : '0',
     notes: f.notes.checked ? '' : '0',
+    pause: orDefault(f.pause.value, '1000'),
     opacity: orDefault(f.opacity.value, '80'),
   };
   settingsMsg.className = 'settings-msg';
